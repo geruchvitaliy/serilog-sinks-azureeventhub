@@ -15,6 +15,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using Microsoft.Azure.EventHubs;
@@ -62,8 +63,8 @@ namespace Serilog.Sinks.AzureEventHub
         /// <param name="events">The events to emit.</param>
         protected override Task EmitBatchAsync(IEnumerable<LogEvent> events)
         {
-            var batchedEvents = new List<EventData>();
-            var batchPartitionKey = Guid.NewGuid().ToString();
+            var batches = new List<EventDataBatch>();
+            var batch = _eventHubClient.CreateBatch();
 
             // Possible optimizations for the below:
             // 1. Reuse a StringWriter object for the whole batch, or possibly across batches.
@@ -77,13 +78,46 @@ namespace Serilog.Sinks.AzureEventHub
                     body = Encoding.UTF8.GetBytes(render.ToString());
                 }
                 var eventHubData = new EventData(body);
-                
+
                 eventHubData.Properties.Add("Type", "SerilogEvent");
                 eventHubData.Properties.Add("Level", logEvent.Level.ToString());
 
-                batchedEvents.Add(eventHubData);
+                AddEventDataIntoBatch(eventHubData);
             }
-            return _eventHubClient.SendAsync(batchedEvents, batchPartitionKey);
+
+            return Task.WhenAll(batches.Select(b => SendBatchAsync(b)));
+
+            void AddEventDataIntoBatch(EventData eventHubData)
+            {
+                if (batch.TryAdd(eventHubData))
+                    return;
+
+                batches.Add(batch);
+
+                batch = _eventHubClient.CreateBatch();
+                if (!batch.TryAdd(eventHubData))
+                    throw new EventHubsException(false, "Event size is greater than event batch size.");
+            }
+
+            async Task SendBatchAsync(EventDataBatch eventHubBatch)
+            {
+                const byte retryCount = 3;
+                var batchPartitionKey = Guid.NewGuid().ToString();
+
+                for (var retryAttempt = 0; retryAttempt < retryCount; retryAttempt++)
+                {
+                    try
+                    {
+                        await _eventHubClient.SendAsync(eventHubBatch.ToEnumerable(), batchPartitionKey);
+
+                        return;
+                    }
+                    catch (EventHubsException e) when (e.IsTransient)
+                    {
+                        await Task.Delay(TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)));
+                    }
+                }
+            }
         }
     }
 }
