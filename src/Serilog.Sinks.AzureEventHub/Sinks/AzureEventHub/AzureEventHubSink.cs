@@ -15,6 +15,7 @@
 using System;
 using System.IO;
 using System.Text;
+using System.Threading.Tasks;
 using Microsoft.Azure.EventHubs;
 using Serilog.Core;
 using Serilog.Events;
@@ -61,7 +62,27 @@ namespace Serilog.Sinks.AzureEventHub
 
             //Unfortunately no support for async in Serilog yet
             //https://github.com/serilog/serilog/issues/134
-            _eventHubClient.SendAsync(eventHubData, Guid.NewGuid().ToString()).GetAwaiter().GetResult();
+            SendAsync(eventHubData).GetAwaiter().GetResult();
+        }
+
+        async Task SendAsync(EventData eventHubData)
+        {
+            const byte retryCount = 3;
+            var partitionKey = Guid.NewGuid().ToString();
+
+            for (var retryAttempt = 0; retryAttempt < retryCount; retryAttempt++)
+            {
+                try
+                {
+                    await _eventHubClient.SendAsync(eventHubData, partitionKey);
+
+                    return;
+                }
+                catch (EventHubsException e) when (e.IsTransient)
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)));
+                }
+            }
         }
     }
 }
