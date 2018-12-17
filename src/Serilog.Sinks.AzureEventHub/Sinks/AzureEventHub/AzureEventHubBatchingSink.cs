@@ -104,7 +104,7 @@ namespace Serilog.Sinks.AzureEventHub
                 const byte retryCount = 3;
                 var batchPartitionKey = Guid.NewGuid().ToString();
 
-                for (var retryAttempt = 0; retryAttempt < retryCount; retryAttempt++)
+                for (var retryAttempt = 0; retryAttempt <= retryCount; retryAttempt++)
                 {
                     try
                     {
@@ -115,6 +115,9 @@ namespace Serilog.Sinks.AzureEventHub
                     catch (EventHubsException e) when (e.IsTransient)
                     {
                         await Task.Delay(TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)));
+
+                        if (retryAttempt == retryCount)
+                            throw;
                     }
                 }
             }
