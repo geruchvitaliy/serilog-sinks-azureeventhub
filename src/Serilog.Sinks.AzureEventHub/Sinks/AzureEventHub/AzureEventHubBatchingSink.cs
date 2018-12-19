@@ -85,6 +85,9 @@ namespace Serilog.Sinks.AzureEventHub
                 AddEventDataIntoBatch(eventHubData);
             }
 
+            if (batch.Count > 0)
+                batches.Add(batch);
+
             await Task.WhenAll(batches.Select(b => SendBatchAsync(b)));
 
             void AddEventDataIntoBatch(EventData eventHubData)
